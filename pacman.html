@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classic Pac-Man</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #0d0d2b;
+            background-image: 
+                radial-gradient(ellipse at 20% 80%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 50%);
+            font-family: 'Press Start 2P', monospace;
+            overflow: hidden;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 600px;
+            padding: 0 10px;
+            color: #fff;
+        }
+
+        .score, .level {
+            font-size: 14px;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        #gameCanvas {
+            border: 3px solid #1e3a8a;
+            border-radius: 8px;
+            box-shadow: 
+                0 0 20px rgba(59, 130, 246, 0.3),
+                inset 0 0 30px rgba(59, 130, 246, 0.1);
+        }
+
+        .lives {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .life-icon {
+            width: 20px;
+            height: 20px;
+            background: #fcd34d;
+            border-radius: 50%;
+            clip-path: polygon(100% 50%, 50% 50%, 65% 15%, 100% 50%, 65% 85%);
+            animation: chomp 0.3s infinite;
+        }
+
+        @keyframes chomp {
+            0%, 100% { clip-path: polygon(100% 50%, 50% 50%, 65% 15%, 100% 50%, 65% 85%); }
+            50% { clip-path: polygon(100% 50%, 50% 50%, 50% 0%, 100% 50%, 50% 100%); }
+        }
+
+        .instructions {
+            color: #64748b;
+            font-size: 10px;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(13, 13, 43, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+            z-index: 10;
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .overlay h1 {
+            color: #fcd34d;
+            font-size: 36px;
+            text-shadow: 
+                0 0 20px rgba(252, 211, 77, 0.8),
+                0 0 40px rgba(252, 211, 77, 0.4);
+            animation: glow 2s ease-in-out infinite;
+        }
+
+        @keyframes glow {
+            0%, 100% { text-shadow: 0 0 20px rgba(252, 211, 77, 0.8), 0 0 40px rgba(252, 211, 77, 0.4); }
+            50% { text-shadow: 0 0 30px rgba(252, 211, 77, 1), 0 0 60px rgba(252, 211, 77, 0.6); }
+        }
+
+        .overlay p {
+            color: #fff;
+            font-size: 12px;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .game-wrapper {
+            position: relative;
+        }
+
+        .result-text {
+            font-size: 24px;
+            color: #fff;
+        }
+
+        .result-text.win {
+            color: #4ade80;
+        }
+
+        .result-text.lose {
+            color: #f87171;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <div class="score">SCORE: <span id="score">0</span></div>
+            <div class="level">LEVEL: <span id="level">1</span></div>
+        </div>
+        
+        <div class="game-wrapper">
+            <canvas id="gameCanvas"></canvas>
+            <div id="startOverlay" class="overlay">
+                <h1>PAC-MAN</h1>
+                <p>PRESS SPACE TO START</p>
+            </div>
+            <div id="gameOverOverlay" class="overlay hidden">
+                <p class="result-text lose">GAME OVER</p>
+                <p>PRESS SPACE TO RESTART</p>
+            </div>
+            <div id="winOverlay" class="overlay hidden">
+                <p class="result-text win">YOU WIN!</p>
+                <p>PRESS SPACE FOR NEXT LEVEL</p>
+            </div>
+        </div>
+
+        <div class="lives" id="livesContainer"></div>
+        <div class="instructions">Arrow Keys or WASD to move</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const COLS = 15;
+        const ROWS = 15;
+        const CELL_SIZE = 36;
+        
+        canvas.width = COLS * CELL_SIZE;
+        canvas.height = ROWS * CELL_SIZE;
+
+        // 0: 空, 1: 墙, 2: 豆子, 3: 能量药丸, 4: 传送门
+        const MAZE_TEMPLATE = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,2,2,2,2,2,1,4,1,2,2,2,2,2,1],
+            [1,2,1,1,1,2,1,2,1,2,1,1,1,2,1],
+            [1,3,1,1,1,2,1,2,1,2,1,1,1,3,1],
+            [1,2,1,1,1,2,1,2,1,2,1,1,1,2,1],
+            [1,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+            [1,2,1,1,1,2,1,1,1,2,1,1,1,2,1],
+            [1,2,2,2,2,2,1,4,1,2,2,2,2,2,1],
+            [1,1,1,2,1,2,1,2,1,2,1,2,1,1,1],
+            [1,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+            [1,2,1,2,1,1,1,2,1,1,1,2,1,2,1],
+            [1,3,1,2,2,2,2,2,2,2,2,2,1,3,1],
+            [1,2,1,2,1,2,1,1,1,2,1,2,1,2,1],
+            [1,2,2,2,2,2,1,2,1,2,2,2,2,2,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+
+        let maze = [];
+        let score = 0;
+        let level = 1;
+        let lives = 3;
+        let gameState = 'start'; // start, playing, paused, gameover, win
+        let energyMode = false;
+        let energyTimer = 0;
+        let ghostEatCombo = 0;
+        let countdown = 3;
+        let countdownTimer = 0;
+
+        const PACMAN_SPEED = 2;
+        const GHOST_SPEED = 1.5;
+
+        let pacman = {
+            x: 7 * CELL_SIZE + CELL_SIZE / 2,
+            y: 10 * CELL_SIZE + CELL_SIZE / 2,
+            radius: CELL_SIZE * 0.4,
+            direction: 0,
+            mouthAngle: 0,
+            mouthDir: 1,
+            nextDirection: 0,
+            moving: false
+        };
+
+        const ghosts = [
+            { x: 7 * CELL_SIZE + CELL_SIZE / 2, y: 6 * CELL_SIZE + CELL_SIZE / 2, color: '#ef4444', name: 'blinky', direction: 0, scared: false, returning: false },
+            { x: 6 * CELL_SIZE + CELL_SIZE / 2, y: 7 * CELL_SIZE + CELL_SIZE / 2, color: '#f472b6', name: 'pinky', direction: 0, scared: false, returning: false },
+            { x: 7 * CELL_SIZE + CELL_SIZE / 2, y: 7 * CELL_SIZE + CELL_SIZE / 2, color: '#22d3ee', name: 'inky', direction: 0, scared: false, returning: false },
+            { x: 8 * CELL_SIZE + CELL_SIZE / 2, y: 7 * CELL_SIZE + CELL_SIZE / 2, color: '#fb923c', name: 'clyde', direction: 0, scared: false, returning: false }
+        ];
+
+        const directions = [
+            { dx: 1, dy: 0 },   // 右
+            { dx: 0, dy: -1 },  // 上
+            { dx: -1, dy: 0 },  // 左
+            { dx: 0, dy: 1 }    // 下
+        ];
+
+        function initMaze() {
+            maze = [];
+            for (let y = 0; y < ROWS; y++) {
+                maze[y] = [];
+                for (let x = 0; x < COLS; x++) {
+                    maze[y][x] = MAZE_TEMPLATE[y][x];
+                }
+            }
+        }
+
+        function updateLivesDisplay() {
+            const container = document.getElementById('livesContainer');
+            container.innerHTML = '';
+            for (let i = 0; i < lives; i++) {
+                const life = document.createElement('div');
+                life.className = 'life-icon';
+                container.appendChild(life);
+            }
+        }
+
+        function isWall(x, y) {
+            const col = Math.floor(x / CELL_SIZE);
+            const row = Math.floor(y / CELL_SIZE);
+            if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return true;
+            return maze[row][col] === 1;
+        }
+
+        function getCellCenter(col, row) {
+            return { x: col * CELL_SIZE + CELL_SIZE / 2, y: row * CELL_SIZE + CELL_SIZE / 2 };
+        }
+
+        function drawWall(x, y) {
+            const padding = 2;
+            ctx.fillStyle = '#1e3a8a';
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            
+            const radius = 6;
+            ctx.beginPath();
+            ctx.roundRect(x + padding, y + padding, CELL_SIZE - padding * 2, CELL_SIZE - padding * 2, radius);
+            ctx.fill();
+            ctx.stroke();
+            
+            // 发光效果
+            ctx.shadowColor = '#3b82f6';
+            ctx.shadowBlur = 8;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawDot(x, y) {
+            ctx.fillStyle = '#fef3c7';
+            ctx.shadowColor = '#fef3c7';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawPowerPellet(x, y, time) {
+            const scale = 1 + Math.sin(time * 0.005) * 0.2;
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(x, y, 8 * scale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawMaze(time) {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    const cellX = x * CELL_SIZE;
+                    const cellY = y * CELL_SIZE;
+                    const center = getCellCenter(x, y);
+                    
+                    switch (maze[y][x]) {
+                        case 1:
+                            drawWall(cellX, cellY);
+                            break;
+                        case 2:
+                            drawDot(center.x, center.y);
+                            break;
+                        case 3:
+                            drawPowerPellet(center.x, center.y, time);
+                            break;
+                    }
+                }
+            }
+        }
+
+        function drawPacman() {
+            ctx.save();
+            ctx.translate(pacman.x, pacman.y);
+            ctx.rotate(pacman.direction * Math.PI / 2);
+            
+            ctx.fillStyle = '#fcd34d';
+            ctx.shadowColor = '#fcd34d';
+            ctx.shadowBlur = 10;
+            
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, pacman.radius, pacman.mouthAngle, Math.PI * 2 - pacman.mouthAngle);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+            ctx.restore();
+        }
+
+        function drawGhost(ghost, time) {
+            ctx.save();
+            ctx.translate(ghost.x, ghost.y);
+            
+            let bodyColor = ghost.color;
+            if (ghost.scared) {
+                if (energyTimer < 2000 && Math.floor(time / 200) % 2 === 0) {
+                    bodyColor = '#ffffff';
+                } else {
+                    bodyColor = '#3b82f6';
+                }
+            }
+            if (ghost.returning) {
+                bodyColor = '#ffffff';
+            }
+            
+            ctx.fillStyle = bodyColor;
+            ctx.shadowColor = bodyColor;
+            ctx.shadowBlur = 8;
+            
+            // 身体
+            ctx.beginPath();
+            ctx.arc(0, -2, pacman.radius, Math.PI, 0);
+            ctx.lineTo(pacman.radius, pacman.radius - 2);
+            
+            // 波浪底部
+            const waveOffset = ghost.returning ? 0 : Math.sin(time * 0.01) * 2;
+            for (let i = 0; i < 4; i++) {
+                const wx = pacman.radius - (i + 1) * (pacman.radius * 2 / 4);
+                const wy = pacman.radius - 2 + (i % 2 === 0 ? waveOffset : -waveOffset);
+                ctx.lineTo(wx, wy);
+            }
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+            
+            // 眼睛
+            if (!ghost.scared || ghost.returning) {
+                const eyeOffsetX = directions[ghost.direction].dx * 2;
+                const eyeOffsetY = directions[ghost.direction].dy * 2;
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(-5, -4, 5, 0, Math.PI * 2);
+                ctx.arc(5, -4, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#1e3a8a';
+                ctx.beginPath();
+                ctx.arc(-5 + eyeOffsetX, -4 + eyeOffsetY, 2.5, 0, Math.PI * 2);
+                ctx.arc(5 + eyeOffsetX, -4 + eyeOffsetY, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // 害怕表情
+                ctx.fillStyle = '#ffffff';
+                for (let i = 0; i < 5; i++) {
+                    const wx = -8 + i * 4;
+                    ctx.beginPath();
+                    ctx.arc(wx, 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            ctx.restore();
+        }
+
+        function updatePacman() {
+            // 嘴巴动画
+            pacman.mouthAngle += 0.15 * pacman.mouthDir;
+            if (pacman.mouthAngle > 0.4 || pacman.mouthAngle < 0.05) {
+                pacman.mouthDir *= -1;
+            }
+            
+            const dir = directions[pacman.direction];
+            const nextDir = directions[pacman.nextDirection];
+            
+            // 尝试转向
+            if (pacman.nextDirection !== pacman.direction) {
+                const nextX = pacman.x + nextDir.dx * PACMAN_SPEED;
+                const nextY = pacman.y + nextDir.dy * PACMAN_SPEED;
+                
+                if (!isWall(nextX + nextDir.dx * pacman.radius, nextY + nextDir.dy * pacman.radius)) {
+                    pacman.direction = pacman.nextDirection;
+                }
+            }
+            
+            // 移动
+            const newX = pacman.x + dir.dx * PACMAN_SPEED;
+            const newY = pacman.y + dir.dy * PACMAN_SPEED;
+            
+            if (!isWall(newX + dir.dx * pacman.radius, newY + dir.dy * pacman.radius)) {
+                pacman.x = newX;
+                pacman.y = newY;
+                pacman.moving = true;
+            } else {
+                pacman.moving = false;
+            }
+            
+            // 传送门
+            const col = Math.floor(pacman.x / CELL_SIZE);
+            const row = Math.floor(pacman.y / CELL_SIZE);
+            if (maze[row] && maze[row][col] === 4) {
+                if (col === 0) {
+                    pacman.x = (COLS - 1) * CELL_SIZE + CELL_SIZE / 2;
+                } else if (col === COLS - 1) {
+                    pacman.x = CELL_SIZE / 2;
+                }
+            }
+            
+            // 吃豆子
+            const cellCol = Math.floor(pacman.x / CELL_SIZE);
+            const cellRow = Math.floor(pacman.y / CELL_SIZE);
+            
+            if (maze[cellRow] && (maze[cellRow][cellCol] === 2 || maze[cellRow][cellCol] === 3)) {
+                if (maze[cellRow][cellCol] === 3) {
+                    score += 50;
+                    activateEnergyMode();
+                } else {
+                    score += 10;
+                }
+                maze[cellRow][cellCol] = 0;
+                document.getElementById('score').textContent = score;
+                
+                // 检查胜利
+                if (checkWin()) {
+                    gameState = 'win';
+                    showOverlay('winOverlay');
+                }
+            }
+        }
+
+        function activateEnergyMode() {
+            energyMode = true;
+            energyTimer = 8000;
+            ghostEatCombo = 0;
+            ghosts.forEach(g => {
+                if (!g.returning) g.scared = true;
+            });
+        }
+
+        function updateGhosts() {
+            const speed = GHOST_SPEED * (1 + (level - 1) * 0.05);
+            const scaredSpeed = energyMode ? speed * 0.5 : speed;
+            
+            ghosts.forEach((ghost, index) => {
+                let targetX = ghost.x;
+                let targetY = ghost.y;
+                
+                if (ghost.returning) {
+                    targetX = 7 * CELL_SIZE + CELL_SIZE / 2;
+                    targetY = 7 * CELL_SIZE + CELL_SIZE / 2;
+                    
+                    const dist = Math.hypot(targetX - ghost.x, targetY - ghost.y);
+                    if (dist < 5) {
+                        ghost.returning = false;
+                        ghost.scared = energyMode;
+                    }
+                } else if (ghost.scared) {
+                    // 逃跑模式 - 随机方向
+                    const dirs = [0, 1, 2, 3].filter(d => {
+                        const testX = ghost.x + directions[d].dx * CELL_SIZE;
+                        const testY = ghost.y + directions[d].dy * CELL_SIZE;
+                        return !isWall(testX, testY);
+                    });
+                    if (dirs.length > 0 && Math.random() < 0.02) {
+                        ghost.direction = dirs[Math.floor(Math.random() * dirs.length)];
+                    }
+                } else {
+                    // 根据不同幽灵设置目标
+                    switch (ghost.name) {
+                        case 'blinky':
+                            targetX = pacman.x;
+                            targetY = pacman.y;
+                            break;
+                        case 'pinky':
+                            targetX = pacman.x + directions[pacman.direction].dx * CELL_SIZE * 4;
+                            targetY = pacman.y + directions[pacman.direction].dy * CELL_SIZE * 4;
+                            break;
+                        case 'inky':
+                            if (Math.random() < 0.02) {
+                                ghost.direction = Math.floor(Math.random() * 4);
+                            }
+                            break;
+                        case 'clyde':
+                            const distToPacman = Math.hypot(pacman.x - ghost.x, pacman.y - ghost.y);
+                            if (distToPacman > CELL_SIZE * 8) {
+                                targetX = pacman.x;
+                                targetY = pacman.y;
+                            }
+                            break;
+                    }
+                }
+                
+                // AI 移动逻辑
+                if (ghost.name !== 'inky' || !ghost.scared) {
+                    const currentDir = ghost.direction;
+                    const dirs = [0, 1, 2, 3].filter(d => {
+                        if ((d + 2) % 4 === currentDir) return false;
+                        const testX = ghost.x + directions[d].dx * CELL_SIZE;
+                        const testY = ghost.y + directions[d].dy * CELL_SIZE;
+                        return !isWall(testX, testY);
+                    });
+                    
+                    if (dirs.length > 0) {
+                        let bestDir = dirs[0];
+                        let bestScore = -Infinity;
+                        
+                        dirs.forEach(d => {
+                            const testX = ghost.x + directions[d].dx * CELL_SIZE;
+                            const testY = ghost.y + directions[d].dy * CELL_SIZE;
+                            let score;
+                            
+                            if (ghost.scared) {
+                                score = -Math.hypot(targetX - testX, targetY - testY);
+                            } else {
+                                score = Math.hypot(targetX - testX, targetY - testY);
+                            }
+                            
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestDir = d;
+                            }
+                        });
+                        
+                        ghost.direction = bestDir;
+                    }
+                }
+                
+                // 移动
+                const actualSpeed = ghost.scared || ghost.returning ? scaredSpeed : speed;
+                ghost.x += directions[ghost.direction].dx * actualSpeed;
+                ghost.y += directions[ghost.direction].dy * actualSpeed;
+                
+                // 传送门
+                const col = Math.floor(ghost.x / CELL_SIZE);
+                const row = Math.floor(ghost.y / CELL_SIZE);
+                if (maze[row] && maze[row][col] === 4) {
+                    if (col === 0) {
+                        ghost.x = (COLS - 1) * CELL_SIZE + CELL_SIZE / 2;
+                    } else if (col === COLS - 1) {
+                        ghost.x = CELL_SIZE / 2;
+                    }
+                }
+                
+                // 碰撞检测
+                const dist = Math.hypot(pacman.x - ghost.x, pacman.y - ghost.y);
+                if (dist < pacman.radius * 1.5) {
+                    if (ghost.scared && !ghost.returning) {
+                        ghost.returning = true;
+                        ghost.scared = false;
+                        ghostEatCombo++;
+                        const points = 200 * Math.pow(2, ghostEatCombo - 1);
+                        score += points;
+                        document.getElementById('score').textContent = score;
+                    } else if (!ghost.scared) {
+                        lives--;
+                        updateLivesDisplay();
+                        if (lives <= 0) {
+                            gameState = 'gameover';
+                            showOverlay('gameOverOverlay');
+                        } else {
+                            resetPositions();
+                            countdown = 2;
+                            countdownTimer = 0;
+                        }
+                    }
+                }
+            });
+        }
+
+        function resetPositions() {
+            pacman.x = 7 * CELL_SIZE + CELL_SIZE / 2;
+            pacman.y = 10 * CELL_SIZE + CELL_SIZE / 2;
+            pacman.direction = 0;
+            pacman.nextDirection = 0;
+            
+            ghosts[0].x = 7 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[0].y = 6 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[1].x = 6 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[1].y = 7 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[2].x = 7 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[2].y = 7 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[3].x = 8 * CELL_SIZE + CELL_SIZE / 2;
+            ghosts[3].y = 7 * CELL_SIZE + CELL_SIZE / 2;
+            
+            ghosts.forEach(g => {
+                g.direction = 0;
+                g.scared = false;
+                g.returning = false;
+            });
+            
+            energyMode = false;
+            energyTimer = 0;
+        }
+
+        function checkWin() {
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    if (maze[y][x] === 2 || maze[y][x] === 3) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function showOverlay(id) {
+            document.getElementById('startOverlay').classList.add('hidden');
+            document.getElementById('gameOverOverlay').classList.add('hidden');
+            document.getElementById('winOverlay').classList.add('hidden');
+            if (id) {
+                document.getElementById(id).classList.remove('hidden');
+            }
+        }
+
+        function startGame() {
+            initMaze();
+            score = 0;
+            lives = 3;
+            level = 1;
+            document.getElementById('score').textContent = score;
+            document.getElementById('level').textContent = level;
+            updateLivesDisplay();
+            resetPositions();
+            gameState = 'playing';
+            countdown = 3;
+            countdownTimer = 0;
+            showOverlay(null);
+        }
+
+        function nextLevel() {
+            level++;
+            document.getElementById('level').textContent = level;
+            initMaze();
+            resetPositions();
+            gameState = 'playing';
+            countdown = 3;
+            countdownTimer = 0;
+            showOverlay(null);
+        }
+
+        function drawCountdown() {
+            ctx.fillStyle = 'rgba(13, 13, 43, 0.7)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#fcd34d';
+            ctx.font = '48px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#fcd34d';
+            ctx.shadowBlur = 20;
+            ctx.fillText(countdown.toString(), canvas.width / 2, canvas.height / 2);
+            ctx.shadowBlur = 0;
+        }
+
+        function gameLoop(time) {
+            ctx.fillStyle = '#0d0d2b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawMaze(time);
+            
+            if (gameState === 'playing') {
+                if (countdown > 0) {
+                    countdownTimer += 16;
+                    if (countdownTimer >= 1000) {
+                        countdown--;
+                        countdownTimer = 0;
+                    }
+                    drawPacman();
+                    ghosts.forEach(g => drawGhost(g, time));
+                    drawCountdown();
+                } else {
+                    updatePacman();
+                    updateGhosts();
+                    
+                    if (energyMode) {
+                        energyTimer -= 16;
+                        if (energyTimer <= 0) {
+                            energyMode = false;
+                            ghosts.forEach(g => g.scared = false);
+                        }
+                    }
+                    
+                    drawPacman();
+                    ghosts.forEach(g => drawGhost(g, time));
+                }
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 键盘控制
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === 'start' || gameState === 'gameover') {
+                    startGame();
+                } else if (gameState === 'win') {
+                    nextLevel();
+                }
+                return;
+            }
+            
+            if (gameState !== 'playing' || countdown > 0) return;
+            
+            switch (e.code) {
+                case 'ArrowRight':
+                case 'KeyD':
+                    pacman.nextDirection = 0;
+                    break;
+                case 'ArrowUp':
+                case 'KeyW':
+                    pacman.nextDirection = 1;
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    pacman.nextDirection = 2;
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    pacman.nextDirection = 3;
+                    break;
+            }
+        });
+
+        // 初始化
+        initMaze();
+        updateLivesDisplay();
+        gameLoop(0);
+    </script>
+</body>
+</html>
